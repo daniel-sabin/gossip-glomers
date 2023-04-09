@@ -1,53 +1,60 @@
 package handlers
 
 import (
-	"fmt"
+	"context"
 	"maelstrom-broadcast/ports"
 	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-func BroadCastHandlerFactory(l *Logger, n *maelstrom.Node, m ports.MessagesRepository, t ports.TopologyRepository) maelstrom.HandlerFunc {
+func After(d time.Duration) <-chan time.Time {
+	return time.After(d)
+}
+
+func retry(n *maelstrom.Node, dest string, body map[string]any) error {
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := n.SyncRPC(ctxTimeout, dest, body)
+	return err
+}
+
+func BroadCastHandlerFactory(l ports.Logger, n *maelstrom.Node, m ports.MessagesRepository, t ports.TopologyRepository, ctx context.Context) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
-		l.Debug(fmt.Sprintf("node %s \n", n.ID()))
+		body, err := parseBody(msg.Body)
+		if err != nil {
+			return nil
+		}
+		go n.Reply(msg, map[string]any{
+			"type": "broadcast_ok",
+		})
 
-		body, _ := parseBody(msg.Body)
 		message := int(body["message"].(float64))
-
-		l.Debug(fmt.Sprintf("message = %d\n", message))
-
 		if m.MessageExists(message) {
-			// l.Debug(fmt.Sprintf("exists %s -> ? (id = %d)\n", msg.Src, id))
 			return nil
 		}
 		m.Save(message)
 
-		broadcastMsgIds := make(map[string]struct{})
 		for _, dest := range t.Topologies() {
+			ctxTimeout, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
 			// Skip to send message to Src client
 			if msg.Src == dest {
-				// l.Debug(fmt.Sprintf("skipped %s -> %s (id = %d)\n", msg.Src, dest, id))
 				continue
 			}
-			// Register broadcast destinations
-			broadcastMsgIds[dest] = struct{}{}
 
-			handler := func(msg maelstrom.Message) error {
-				delete(broadcastMsgIds, dest)
-				return nil
-			}
-
-			go func(dest string) {
-				for len(broadcastMsgIds) > 0 {
-					n.RPC(dest, body, handler)
-					time.Sleep(500 * time.Microsecond)
+			go func(dest string, ctx context.Context) {
+				if _, err := n.SyncRPC(ctx, dest, body); err != nil {
+					for {
+						time.Sleep(time.Second)
+						if err := retry(n, dest, body); err == nil {
+							break
+						}
+					}
 				}
-			}(dest)
+			}(dest, ctxTimeout)
 		}
-
-		return n.Reply(msg, map[string]any{
-			"type": "broadcast_ok",
-		})
+		return nil
 	}
 }

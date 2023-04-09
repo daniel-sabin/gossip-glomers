@@ -8,6 +8,6 @@ type TopologyRepository interface {
 type MessagesRepository interface {
 	Save(id int)
 	MessageExists(id int) bool
-	Messages() map[int]struct{}
+	Messages() []int
 	MessagesCount() int
 }

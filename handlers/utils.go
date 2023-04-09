@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
+
+	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
 func parseBody(j json.RawMessage) (map[string]any, error) {
@@ -24,18 +27,26 @@ func check(e error) {
 }
 
 type Logger struct {
-	f *os.File
+	f     *os.File
+	n     *maelstrom.Node
+	mutex sync.RWMutex
 }
 
-func NewLogger(n string) *Logger {
-	f, err := os.Create(fmt.Sprintf("/tmp/dat2-n%s", n))
-	check(err)
+func NewLogger(n *maelstrom.Node) *Logger {
 	return &Logger{
-		f,
+		f: nil,
+		n: n,
 	}
 }
 
 func (l *Logger) Debug(s string) {
+	if l.f == nil {
+		f, err := os.Create(fmt.Sprintf("/tmp/dat2-%s", l.n.ID()))
+		check(err)
+		l.f = f
+	}
+
+	l.mutex.Lock()
 	var buf bytes.Buffer
 	logger := log.New(&buf, "INFO: ", log.Lshortfile)
 	logger.Output(2, s)
@@ -44,6 +55,7 @@ func (l *Logger) Debug(s string) {
 	_, err := w.WriteString(buf.String())
 	check(err)
 	w.Flush()
+	l.mutex.Unlock()
 }
 
 func (l *Logger) Close() {

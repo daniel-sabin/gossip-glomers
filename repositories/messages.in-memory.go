@@ -4,6 +4,7 @@ import "sync"
 
 type MessagesRepositoryInMemory struct {
 	store map[int]struct{}
+	ids   []int
 	mutex sync.RWMutex
 }
 
@@ -27,8 +28,15 @@ func (m *MessagesRepositoryInMemory) MessageExists(id int) bool {
 	return exists
 }
 
-func (m *MessagesRepositoryInMemory) Messages() map[int]struct{} {
-	return m.store
+func (m *MessagesRepositoryInMemory) Messages() []int {
+	m.ids = make([]int, 0, m.MessagesCount())
+	m.mutex.Lock()
+	for id := range m.store {
+		m.ids = append(m.ids, id)
+	}
+	m.mutex.Unlock()
+
+	return m.ids
 }
 
 func (m *MessagesRepositoryInMemory) MessagesCount() int {
