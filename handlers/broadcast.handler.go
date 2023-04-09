@@ -8,10 +8,6 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-func After(d time.Duration) <-chan time.Time {
-	return time.After(d)
-}
-
 func retry(n *maelstrom.Node, dest string, body map[string]any) error {
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -19,7 +15,7 @@ func retry(n *maelstrom.Node, dest string, body map[string]any) error {
 	return err
 }
 
-func BroadCastHandlerFactory(l ports.Logger, n *maelstrom.Node, m ports.MessagesRepository, t ports.TopologyRepository, ctx context.Context) maelstrom.HandlerFunc {
+func BroadCastHandlerFactory(l ports.Logger, n *maelstrom.Node, m ports.MessagesRepository, t ports.TopologyRepository) maelstrom.HandlerFunc {
 	return func(msg maelstrom.Message) error {
 		body, err := parseBody(msg.Body)
 		if err != nil {
@@ -36,16 +32,13 @@ func BroadCastHandlerFactory(l ports.Logger, n *maelstrom.Node, m ports.Messages
 		m.Save(message)
 
 		for _, dest := range t.Topologies() {
-			ctxTimeout, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-
 			// Skip to send message to Src client
 			if msg.Src == dest {
 				continue
 			}
 
-			go func(dest string, ctx context.Context) {
-				if _, err := n.SyncRPC(ctx, dest, body); err != nil {
+			go func(dest string) {
+				if err := retry(n, dest, body); err != nil {
 					for {
 						time.Sleep(time.Second)
 						if err := retry(n, dest, body); err == nil {
@@ -53,7 +46,7 @@ func BroadCastHandlerFactory(l ports.Logger, n *maelstrom.Node, m ports.Messages
 						}
 					}
 				}
-			}(dest, ctxTimeout)
+			}(dest)
 		}
 		return nil
 	}
